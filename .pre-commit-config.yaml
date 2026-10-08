@@ -18,4 +18,5 @@ repos:
     rev: 1.7.9
     hooks:
       - id: bandit
-        args: ["-r", "app.py", "-ll"]
+        args: ["-ll", "-c", "bandit.yaml"]
+        files: ^app/

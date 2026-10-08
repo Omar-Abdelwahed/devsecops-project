@@ -1,0 +1,27 @@
+# Keep the build context minimal: only requirements.txt and app/ are needed.
+.git
+.github
+.gitignore
+.pre-commit-config.yaml
+.dockerignore
+Dockerfile
+docs/
+tests/
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.db
+*.json
+*.html
+*.md
+.env
+.env.*
+requirements-dev.txt
+bandit.yaml
+sonar-project.properties
+sonarqube/
+.scannerwork/
+.coveragerc
+*.xml

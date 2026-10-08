@@ -1,0 +1,14 @@
+# Bandit configuration: documented scanner exemptions.
+# Every entry must reference an approved exemption in exemption-process.md.
+#
+# EXC-001 | B104 hardcoded_bind_all_interfaces | app/app.py
+#   Reason   : false positive. The app runs inside a container, where binding to
+#              0.0.0.0 is required for the port mapping to work. Network exposure is
+#              controlled by Docker (-p 5000:5000), not by the bind address.
+#   Approved : 2026-10-08, review by 2027-04-08
+skips:
+  - B104
+
+exclude_dirs:
+  - tests
+  - venv

@@ -9,9 +9,30 @@ permissions:
   contents: read
 
 jobs:
+  unit-tests:
+    name: Unit tests (Pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - name: Pytest (blocking)
+        run: python -m pytest tests/ -v --junitxml=pytest-report.xml --cov=app --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pytest-report
+          path: |
+            pytest-report.xml
+            coverage.xml
+          if-no-files-found: ignore
+
   secrets-scan:
     name: Secrets scan (Gitleaks)
     runs-on: ubuntu-latest
+    needs: unit-tests
     steps:
       - uses: actions/checkout@v4
       - name: Gitleaks (blocking)
@@ -26,41 +47,63 @@ jobs:
           if-no-files-found: ignore
 
   sast:
-    name: SAST (Bandit + Semgrep)
+    name: SAST (Bandit)
     runs-on: ubuntu-latest
+    needs: unit-tests
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install bandit semgrep
+      - run: pip install bandit
 
+      # bandit.yaml holds the documented exemptions (see exemption-process.md)
       - name: Bandit (blocking on Medium+)
-        run: bandit -r app -ll -f json -o bandit-report.json
+        run: bandit -r app -ll -c bandit.yaml -f json -o bandit-report.json
       - name: Bandit findings summary
         if: always()
         run: |
           jq -r '.results[] | "\(.issue_severity) \(.test_id) \(.filename):\(.line_number) \(.issue_text)"' \
             bandit-report.json || true
 
-      - name: Semgrep (blocking on ERROR)
-        run: |
-          semgrep scan --metrics=off --error --severity ERROR \
-            --config p/python --config p/flask --config p/owasp-top-ten --config p/dockerfile \
-            --json-output=semgrep-report.json .
-
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: sast-reports
-          path: |
-            bandit-report.json
-            semgrep-report.json
+          path: bandit-report.json
           if-no-files-found: ignore
+
+  sonarqube:
+    name: SAST (SonarQube)
+    # Runs on this team's PC, where SonarQube lives in Docker Desktop (see sonarqube/).
+    runs-on: [self-hosted, windows, sonarqube]
+    needs: unit-tests
+    # Never run code from fork PRs on the self-hosted machine.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # SonarQube uses git history to detect new code
+      - uses: actions/download-artifact@v4
+        with:
+          name: pytest-report
+      - name: SonarQube scan + Quality Gate (blocking)
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          docker run --rm --network sonarnet `
+            -e SONAR_HOST_URL=http://sonarqube:9000 -e SONAR_TOKEN `
+            -v "${{ github.workspace }}:/usr/src" `
+            sonarsource/sonar-scanner-cli:latest
+          exit $LASTEXITCODE
 
   sca:
     name: SCA (Trivy filesystem)
     runs-on: ubuntu-latest
+    needs: unit-tests
     steps:
       - uses: actions/checkout@v4
       - name: Trivy fs (blocking on HIGH/CRITICAL)
@@ -81,15 +124,47 @@ jobs:
           path: trivy-fs.json
           if-no-files-found: ignore
 
-  build-scan-dast:
-    name: Build, image scan, DAST
+  dockerfile-lint:
+    name: Dockerfile lint (Hadolint)
     runs-on: ubuntu-latest
-    needs: [secrets-scan, sast, sca]   # image is only built if every earlier gate is green
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hadolint (blocking on warning+)
+        run: docker run --rm -i hadolint/hadolint:latest hadolint --failure-threshold warning - < Dockerfile
+      - name: Hadolint JSON report
+        if: always()
+        run: |
+          docker run --rm -i hadolint/hadolint:latest hadolint --no-fail --format json - \
+            < Dockerfile > hadolint-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hadolint-report
+          path: hadolint-report.json
+          if-no-files-found: ignore
+
+  build-scan-dast:
+    name: Build, SBOM, image scan, DAST
+    runs-on: ubuntu-latest
+    needs: [secrets-scan, sast, sonarqube, sca, dockerfile-lint]   # image is only built if every earlier gate is green
     steps:
       - uses: actions/checkout@v4
 
       - name: Docker build
         run: docker build -t devsecops-app:${{ github.sha }} .
+
+      - name: SBOM (Syft, CycloneDX + SPDX)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/work" \
+            anchore/syft:latest docker:devsecops-app:${{ github.sha }} \
+            -o cyclonedx-json=/work/sbom.cyclonedx.json -o spdx-json=/work/sbom.spdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            sbom.cyclonedx.json
+            sbom.spdx.json
 
       - name: Trivy image (blocking on HIGH/CRITICAL)
         run: |

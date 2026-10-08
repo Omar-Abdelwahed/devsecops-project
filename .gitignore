@@ -2,3 +2,8 @@ venv/
 __pycache__/
 *.db
 .pytest_cache/
+.coverage
+coverage.xml
+pytest-report.xml
+.scannerwork/
+actions-runner/
