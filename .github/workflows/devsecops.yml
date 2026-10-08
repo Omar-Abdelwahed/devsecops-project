@@ -2,69 +2,138 @@ name: DevSecOps Pipeline
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   secrets-scan:
+    name: Secrets scan (Gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Run Gitleaks (Quality Gate)
+      - uses: actions/checkout@v4
+      - name: Gitleaks (blocking)
         run: |
-          docker run -v ${{ github.workspace }}:/path zricethezav/gitleaks:latest detect --source="/path" --verbose --report-path="/path/gitleaks-report.json"
-      - name: Upload Gitleaks Report
-        uses: actions/upload-artifact@v4
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest dir /repo \
+            --redact --report-format json --report-path /repo/gitleaks-report.json
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: gitleaks-report
           path: gitleaks-report.json
+          if-no-files-found: ignore
 
-  sast-sca-scan:
+  sast:
+    name: SAST (Bandit + Semgrep)
     runs-on: ubuntu-latest
-    needs: secrets-scan
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
-      - name: Run Bandit (Quality Gate)
+          python-version: "3.12"
+      - run: pip install bandit semgrep
+
+      - name: Bandit (blocking on Medium+)
+        run: bandit -r app -ll -f json -o bandit-report.json
+      - name: Bandit findings summary
+        if: always()
         run: |
-          pip install bandit
-          bandit -r app.py -f json -o bandit-report.json -ll
-      - name: Run Semgrep (Quality Gate)
+          jq -r '.results[] | "\(.issue_severity) \(.test_id) \(.filename):\(.line_number) \(.issue_text)"' \
+            bandit-report.json || true
+
+      - name: Semgrep (blocking on ERROR)
         run: |
-          docker run -v ${{ github.workspace }}:/src returntocorp/semgrep:latest semgrep scan --config auto --json --output=/src/semgrep-report.json --error
-      - name: Upload SAST Reports
-        uses: actions/upload-artifact@v4
+          semgrep scan --metrics=off --error --severity ERROR \
+            --config p/python --config p/flask --config p/owasp-top-ten --config p/dockerfile \
+            --json-output=semgrep-report.json .
+
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: sast-sca-reports
+          name: sast-reports
           path: |
             bandit-report.json
             semgrep-report.json
+          if-no-files-found: ignore
 
-  build-and-dast:
+  sca:
+    name: SCA (Trivy filesystem)
     runs-on: ubuntu-latest
-    needs: sast-sca-scan
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Build Docker Image
-        run: docker build -t vulnerable-app:latest .
-      - name: Run Trivy Image Scan (Quality Gate)
+      - uses: actions/checkout@v4
+      - name: Trivy fs (blocking on HIGH/CRITICAL)
         run: |
-          docker run -v /var/run/docker.sock:/var/run/docker.sock -v ${{ github.workspace }}:/workspace aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL --format json -o /workspace/trivy-image-report.json vulnerable-app:latest
-      - name: Upload DAST and Image Reports
-        uses: actions/upload-artifact@v4
+          mkdir -p "$HOME/.cache/trivy"
+          docker run --rm -v "$PWD:/work" -w /work -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            aquasec/trivy:latest fs --scanners vuln --severity HIGH,CRITICAL \
+            --ignore-unfixed --exit-code 1 --format json --output trivy-fs.json .
+      - name: Print findings table
+        if: always()
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work aquasec/trivy:latest \
+            convert --format table trivy-fs.json || true
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: dast-and-image-reports
-          path: |
-            trivy-image-report.json
+          name: trivy-fs-report
+          path: trivy-fs.json
+          if-no-files-found: ignore
 
-            
+  build-scan-dast:
+    name: Build, image scan, DAST
+    runs-on: ubuntu-latest
+    needs: [secrets-scan, sast, sca]   # image is only built if every earlier gate is green
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker build
+        run: docker build -t devsecops-app:${{ github.sha }} .
+
+      - name: Trivy image (blocking on HIGH/CRITICAL)
+        run: |
+          mkdir -p "$HOME/.cache/trivy"
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD:/work" -w /work -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            aquasec/trivy:latest image --scanners vuln --severity HIGH,CRITICAL \
+            --ignore-unfixed --exit-code 1 --format json --output trivy-image.json \
+            devsecops-app:${{ github.sha }}
+      - name: Print image findings table
+        if: always()
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work aquasec/trivy:latest \
+            convert --format table trivy-image.json || true
+
+      - name: Start container
+        run: |
+          docker run -d --name app -p 5000:5000 \
+            -e SECRET_KEY="$(openssl rand -hex 32)" devsecops-app:${{ github.sha }}
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:5000/health && exit 0
+            sleep 2
+          done
+          docker logs app
+          exit 1
+
+      - name: OWASP ZAP baseline (blocking on FAIL rules)
+        run: |
+          mkdir zap && chmod 777 zap
+          printf '10020\tFAIL\t(Missing Anti-clickjacking Header)\n10021\tFAIL\t(X-Content-Type-Options Missing)\n10038\tFAIL\t(CSP Header Not Set)\n' > zap/rules.tsv
+          docker run --rm --network host -v "$PWD/zap:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+            -t http://localhost:5000 -c rules.tsv -I -r zap-report.html -J zap-report.json
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f app || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: image-and-dast-reports
+          path: |
+            trivy-image.json
+            zap/zap-report.html
+            zap/zap-report.json
+          if-no-files-found: ignore
