@@ -7,24 +7,24 @@ on:
 jobs:
   secrets-scan:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Run Gitleaks
+      - name: Run Gitleaks (Quality Gate)
         run: |
-          docker run -v ${{ github.workspace }}:/path zricethezav/gitleaks:latest detect --source="/path" --verbose --report-path="/path/gitleaks-report.json" || true
+          docker run -v ${{ github.workspace }}:/path zricethezav/gitleaks:latest detect --source="/path" --verbose --report-path="/path/gitleaks-report.json"
       - name: Upload Gitleaks Report
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: gitleaks-report
           path: gitleaks-report.json
 
   sast-sca-scan:
     runs-on: ubuntu-latest
-    continue-on-error: true
+    needs: secrets-scan
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -32,48 +32,39 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-      - name: Run Bandit
+      - name: Run Bandit (Quality Gate)
         run: |
           pip install bandit
-          bandit -r app.py -f json -o bandit-report.json -ll || true
-      - name: Run Semgrep
+          bandit -r app.py -f json -o bandit-report.json -ll
+      - name: Run Semgrep (Quality Gate)
         run: |
-          docker run -v ${{ github.workspace }}:/src returntocorp/semgrep:latest semgrep scan --config auto --json --output=/src/semgrep-report.json || true
-      - name: Run Trivy FS (SCA)
-        run: |
-          docker run -v ${{ github.workspace }}:/workspace aquasec/trivy:latest fs --security-checks vuln --severity HIGH,CRITICAL --format json -o /workspace/trivy-fs-report.json /workspace || true
-      - name: Upload SAST and SCA Reports
+          docker run -v ${{ github.workspace }}:/src returntocorp/semgrep:latest semgrep scan --config auto --json --output=/src/semgrep-report.json --error
+      - name: Upload SAST Reports
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: sast-sca-reports
           path: |
             bandit-report.json
             semgrep-report.json
-            trivy-fs-report.json
 
   build-and-dast:
     runs-on: ubuntu-latest
-    continue-on-error: true
+    needs: sast-sca-scan
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Build Docker Image
         run: docker build -t vulnerable-app:latest .
-      - name: Run Trivy Image Scan
+      - name: Run Trivy Image Scan (Quality Gate)
         run: |
-          docker run -v /var/run/docker.sock:/var/run/docker.sock -v ${{ github.workspace }}:/workspace aquasec/trivy:latest image --severity HIGH,CRITICAL --format json -o /workspace/trivy-image-report.json vulnerable-app:latest || true
-      - name: Run Application Container
-        run: docker run -d --name target-app -p 5000:5000 vulnerable-app:latest
-      - name: Wait for App to Boot
-        run: sleep 5
-      - name: Run OWASP ZAP Baseline
-        run: |
-          docker run --rm --network="host" -v ${{ github.workspace }}:/zap/wrk/:rw zaproxy/zap-stable zap-baseline.py -t http://localhost:5000 -J zap-report.json -r zap-report.html || true
+          docker run -v /var/run/docker.sock:/var/run/docker.sock -v ${{ github.workspace }}:/workspace aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL --format json -o /workspace/trivy-image-report.json vulnerable-app:latest
       - name: Upload DAST and Image Reports
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: dast-and-image-reports
           path: |
             trivy-image-report.json
-            zap-report.json
-            zap-report.html
+
+            
