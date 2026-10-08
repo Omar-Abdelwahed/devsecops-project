@@ -141,6 +141,60 @@ Résultat de `trivy fs --severity HIGH,CRITICAL --ignore-unfixed` sur `requireme
 
 **Total : 3 CVE HIGH, 0 CRITICAL.**
 
+Les quatre autres paquets (`click`, `itsdangerous`, `jinja2`, `markupsafe`) et
+`pytest` n'apparaissent pas : ils n'ont aucune CVE HIGH/CRITICAL disposant d'un correctif.
+
+### Table de correspondance CVE / CVSS
+
+Le score **CVSS** (*Common Vulnerability Scoring System*, de 0,0 à 10,0) mesure la
+gravité d'une CVE. Le **vecteur** décrit les conditions de l'attaque :
+
+| Élément du vecteur | Signification |
+|---|---|
+| `AV:N` | Attaque possible à distance, par le réseau |
+| `AC:L` / `AC:H` | Complexité d'attaque faible / élevée |
+| `PR:N` | Aucun compte ni privilège nécessaire |
+| `UI:N` / `UI:R` | Aucune action de la victime / action de la victime requise |
+| `C` / `I` / `A` | Impact sur la confidentialité / l'intégrité / la disponibilité (`H` = élevé, `N` = aucun) |
+
+La colonne **Atteignable ?** répond à une question que l'outil ne pose pas : la
+fonctionnalité vulnérable est-elle réellement utilisée par **notre** application ?
+Trivy compare seulement des numéros de version.
+
+| Paquet | Version | CVE | CWE | CVSS 3.1 | Vecteur | Sévérité | Corrigé en | Atteignable ? | Action |
+|---|---|---|---|---|---|---|---|---|---|
+| flask | 2.0.1 | CVE-2023-30861 | CWE-539 | 7,5 | `AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N` | HIGH | 2.2.5 / 2.3.2 | **Non** | Mise à jour vers 3.1.3 |
+| werkzeug | 2.0.1 | CVE-2023-25577 | CWE-770 | 7,5 | `AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` | HIGH | 2.2.3 | **Oui** | Mise à jour vers 3.1.9 (prioritaire) |
+| werkzeug | 2.0.1 | CVE-2024-34069 | CWE-352 | 7,5 | `AV:N/AC:H/PR:N/UI:R/S:U/C:H/I:H/A:H` | HIGH | 3.0.3 | **Oui en As-Is**, non après remédiation | Mise à jour vers 3.1.9 + suppression de `debug=True` |
+
+Source des scores : GitHub Security Advisories (GHSA) et NVD, d'après le rapport
+`trivy-fs.json`. Pour CVE-2023-30861, la GHSA donne aussi un score CVSS 4.0 de 8,7.
+
+**Analyse d'atteignabilité :**
+
+- **CVE-2023-30861 (Flask) — non atteignable.** La fuite du cookie de session exige
+  simultanément un proxy de cache entre l'utilisateur et l'application, et
+  `session.permanent = True`. L'application ne définit jamais de session permanente
+  et n'est pas déployée derrière un proxy de cache.
+- **CVE-2023-25577 (Werkzeug) — atteignable.** Le parseur de formulaires multipart
+  n'impose aucune limite au nombre de parties. Les routes `/register` et `/login`
+  lisent `request.form` **sans authentification** : n'importe quel visiteur peut
+  envoyer un formulaire contenant des milliers de parties et saturer le processeur et
+  la mémoire, rendant l'application indisponible (déni de service). C'est la CVE la
+  plus critique **pour cette application**.
+- **CVE-2024-34069 (Werkzeug) — atteignable en As-Is uniquement.** La faille touche le
+  débogueur Werkzeug, actif seulement en mode debug. La version As-Is lançait
+  `app.run(debug=True)` : un attaquant capable d'amener un développeur sur un domaine
+  qu'il contrôle pouvait exécuter du code sur son poste. Après remédiation, le mode
+  debug est supprimé et la production utilise Gunicorn : la faille n'est plus atteignable.
+
+**Pourquoi corriger aussi une CVE non atteignable ?** La politique du pipeline bloque
+toute CVE HIGH/CRITICAL **corrigeable**, sans tenir compte de l'atteignabilité. La mise
+à jour est peu coûteuse, et l'atteignabilité peut changer : il suffirait d'ajouter
+`session.permanent = True` dans une future version pour rendre CVE-2023-30861
+exploitable. Une exemption (`.trivyignore`) ne serait justifiée que pour une CVE à la
+fois non atteignable **et** sans correctif disponible.
+
 ## 3.6 Scan de conteneur — Trivy image
 
 L'image d'origine était construite sur `python:3.8` (image complète, version de
