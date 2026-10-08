@@ -1,0 +1,36 @@
+name: "Level 6 - Manual Approval & Deploy"
+
+# Reusable stage, called by devsecops.yml. The "production" GitHub environment has a
+# required reviewer: the job waits until a person reviews the results and clicks Approve.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-production:
+    name: Deploy to production (after approval)
+    runs-on: [self-hosted, windows, docker-desktop]
+    environment:
+      name: production
+      url: http://127.0.0.1:8080
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+      # The exact image that passed the gate and staging: never rebuilt for production.
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-image
+      - name: Load image
+        run: docker load -i app-image.tar.gz
+
+      - name: Deploy to production (hardened container, automatic rollback)
+        env:
+          # Stable key so user sessions survive a redeploy. Stored as an environment secret.
+          SECRET_KEY: ${{ secrets.PROD_SECRET_KEY }}
+        run: |
+          .\scripts\deploy.ps1 -Environment production -Image "devsecops-app:$env:GITHUB_SHA" -Port 8080
+          exit $LASTEXITCODE

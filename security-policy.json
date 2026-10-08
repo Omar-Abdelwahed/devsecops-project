@@ -1,0 +1,34 @@
+{
+  "_comment": "Security Gate policy (level 4). Exemptions are declared per tool: bandit.yaml, .checkov.yaml, .trivyignore, SonarQube issue statuses. See exemption-process.md.",
+  "fail_if_report_missing": true,
+  "tools": {
+    "gitleaks": {
+      "label": "Secrets (Gitleaks)",
+      "block_severities": ["CRITICAL"]
+    },
+    "bandit": {
+      "label": "SAST (Bandit)",
+      "block_severities": ["MEDIUM", "HIGH"]
+    },
+    "sonarqube": {
+      "label": "SAST + quality (SonarQube)",
+      "block_severities": ["CRITICAL"]
+    },
+    "trivy-fs": {
+      "label": "SCA (Trivy filesystem)",
+      "block_severities": ["HIGH", "CRITICAL"],
+      "block_cvss_at_or_above": 7.0,
+      "only_fixable": true
+    },
+    "checkov": {
+      "label": "IaC (Checkov)",
+      "block_severities": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+    },
+    "trivy-image": {
+      "label": "Container image (Trivy image)",
+      "block_severities": ["HIGH", "CRITICAL"],
+      "block_cvss_at_or_above": 7.0,
+      "only_fixable": true
+    }
+  }
+}

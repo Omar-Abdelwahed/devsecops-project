@@ -1,0 +1,29 @@
+name: "Level 3 - Report Generation"
+
+# Reusable stage, called by devsecops.yml. Merges every scanner report into one
+# normalized report (JSON for the gate, Markdown + HTML for people).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  reports:
+    name: Consolidated security report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: scan-*
+          path: reports
+          merge-multiple: true
+      - name: Generate JSON, Markdown and HTML reports
+        run: python3 scripts/security_report.py reports security-report
+      - uses: actions/upload-artifact@v4
+        with:
+          name: security-report
+          path: |
+            reports/
+            security-report/

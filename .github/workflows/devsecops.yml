@@ -1,214 +1,67 @@
 name: DevSecOps Pipeline
 
+# Orchestrator: chains the six levels of the pipeline. Each level lives in its own
+# reusable workflow file (level1-...yml to level6-...yml) and only starts when the
+# previous one succeeded.
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# One deployment at a time: a newer push waits for the running pipeline to finish.
+concurrency:
+  group: devsecops-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  unit-tests:
-    name: Unit tests (Pytest)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements-dev.txt
-      - name: Pytest (blocking)
-        run: python -m pytest tests/ -v --junitxml=pytest-report.xml --cov=app --cov-report=xml
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: pytest-report
-          path: |
-            pytest-report.xml
-            coverage.xml
-          if-no-files-found: ignore
+  build-test:
+    name: "1 Build & Test"
+    uses: ./.github/workflows/level1-build-test.yml
 
-  secrets-scan:
-    name: Secrets scan (Gitleaks)
-    runs-on: ubuntu-latest
-    needs: unit-tests
-    steps:
-      - uses: actions/checkout@v4
-      - name: Gitleaks (blocking)
-        run: |
-          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest dir /repo \
-            --redact --report-format json --report-path /repo/gitleaks-report.json
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: gitleaks-report
-          path: gitleaks-report.json
-          if-no-files-found: ignore
+  security-scans:
+    name: "2 Security Scans"
+    needs: build-test
+    uses: ./.github/workflows/level2-security-scans.yml
+    secrets: inherit
 
-  sast:
-    name: SAST (Bandit)
-    runs-on: ubuntu-latest
-    needs: unit-tests
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install bandit
+  reports:
+    name: "3 Report Generation"
+    needs: [build-test, security-scans]
+    # Runs even if a scanner crashed: the gate then sees a missing report and blocks (fail closed).
+    if: ${{ !cancelled() && needs.build-test.result == 'success' }}
+    uses: ./.github/workflows/level3-reports.yml
 
-      # bandit.yaml holds the documented exemptions (see exemption-process.md)
-      - name: Bandit (blocking on Medium+)
-        run: bandit -r app -ll -c bandit.yaml -f json -o bandit-report.json
-      - name: Bandit findings summary
-        if: always()
-        run: |
-          jq -r '.results[] | "\(.issue_severity) \(.test_id) \(.filename):\(.line_number) \(.issue_text)"' \
-            bandit-report.json || true
+  security-gate:
+    name: "4 Security Gate"
+    needs: reports
+    if: ${{ !cancelled() && needs.reports.result == 'success' }}
+    uses: ./.github/workflows/level4-security-gate.yml
 
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: sast-reports
-          path: bandit-report.json
-          if-no-files-found: ignore
+  staging-dast:
+    name: "5 Staging + DAST"
+    needs: security-gate
+    # Deployments only happen from main, never from a pull request.
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    uses: ./.github/workflows/level5-staging-dast.yml
 
-  sonarqube:
-    name: SAST (SonarQube)
-    # Runs on this team's PC, where SonarQube lives in Docker Desktop (see sonarqube/).
-    runs-on: [self-hosted, windows, sonarqube]
-    needs: unit-tests
-    # Never run code from fork PRs on the self-hosted machine.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    defaults:
-      run:
-        shell: powershell
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0   # SonarQube uses git history to detect new code
-      - uses: actions/download-artifact@v4
-        with:
-          name: pytest-report
-      - name: SonarQube scan + Quality Gate (blocking)
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          docker run --rm --network sonarnet `
-            -e SONAR_HOST_URL=http://sonarqube:9000 -e SONAR_TOKEN `
-            -v "${{ github.workspace }}:/usr/src" `
-            sonarsource/sonar-scanner-cli:latest
-          exit $LASTEXITCODE
+  deploy-production:
+    name: "6 Manual Approval & Deploy"
+    needs: staging-dast
+    uses: ./.github/workflows/level6-deploy-production.yml
+    secrets: inherit
 
-  sca:
-    name: SCA (Trivy filesystem)
-    runs-on: ubuntu-latest
-    needs: unit-tests
-    steps:
-      - uses: actions/checkout@v4
-      - name: Trivy fs (blocking on HIGH/CRITICAL)
-        run: |
-          mkdir -p "$HOME/.cache/trivy"
-          docker run --rm -v "$PWD:/work" -w /work -v "$HOME/.cache/trivy:/root/.cache/trivy" \
-            aquasec/trivy:latest fs --scanners vuln --severity HIGH,CRITICAL \
-            --ignore-unfixed --exit-code 1 --format json --output trivy-fs.json .
-      - name: Print findings table
-        if: always()
-        run: |
-          docker run --rm -v "$PWD:/work" -w /work aquasec/trivy:latest \
-            convert --format table trivy-fs.json || true
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: trivy-fs-report
-          path: trivy-fs.json
-          if-no-files-found: ignore
-
-  dockerfile-lint:
-    name: Dockerfile lint (Hadolint)
-    runs-on: ubuntu-latest
-    needs: unit-tests
-    steps:
-      - uses: actions/checkout@v4
-      - name: Hadolint (blocking on warning+)
-        run: docker run --rm -i hadolint/hadolint:latest hadolint --failure-threshold warning - < Dockerfile
-      - name: Hadolint JSON report
-        if: always()
-        run: |
-          docker run --rm -i hadolint/hadolint:latest hadolint --no-fail --format json - \
-            < Dockerfile > hadolint-report.json
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: hadolint-report
-          path: hadolint-report.json
-          if-no-files-found: ignore
-
-  build-scan-dast:
-    name: Build, SBOM, image scan, DAST
-    runs-on: ubuntu-latest
-    needs: [secrets-scan, sast, sonarqube, sca, dockerfile-lint]   # image is only built if every earlier gate is green
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Docker build
-        run: docker build -t devsecops-app:${{ github.sha }} .
-
-      - name: SBOM (Syft, CycloneDX + SPDX)
-        run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/work" \
-            anchore/syft:latest docker:devsecops-app:${{ github.sha }} \
-            -o cyclonedx-json=/work/sbom.cyclonedx.json -o spdx-json=/work/sbom.spdx.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: sbom
-          path: |
-            sbom.cyclonedx.json
-            sbom.spdx.json
-
-      - name: Trivy image (blocking on HIGH/CRITICAL)
-        run: |
-          mkdir -p "$HOME/.cache/trivy"
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            -v "$PWD:/work" -w /work -v "$HOME/.cache/trivy:/root/.cache/trivy" \
-            aquasec/trivy:latest image --scanners vuln --severity HIGH,CRITICAL \
-            --ignore-unfixed --exit-code 1 --format json --output trivy-image.json \
-            devsecops-app:${{ github.sha }}
-      - name: Print image findings table
-        if: always()
-        run: |
-          docker run --rm -v "$PWD:/work" -w /work aquasec/trivy:latest \
-            convert --format table trivy-image.json || true
-
-      - name: Start container
-        run: |
-          docker run -d --name app -p 5000:5000 \
-            -e SECRET_KEY="$(openssl rand -hex 32)" devsecops-app:${{ github.sha }}
-          for i in $(seq 1 30); do
-            curl -fsS http://localhost:5000/health && exit 0
-            sleep 2
-          done
-          docker logs app
-          exit 1
-
-      - name: OWASP ZAP baseline (blocking on FAIL rules)
-        run: |
-          mkdir zap && chmod 777 zap
-          printf '10020\tFAIL\t(Missing Anti-clickjacking Header)\n10021\tFAIL\t(X-Content-Type-Options Missing)\n10038\tFAIL\t(CSP Header Not Set)\n' > zap/rules.tsv
-          docker run --rm --network host -v "$PWD/zap:/zap/wrk:rw" \
-            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
-            -t http://localhost:5000 -c rules.tsv -I -r zap-report.html -J zap-report.json
-
-      - name: Stop container
-        if: always()
-        run: docker rm -f app || true
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: image-and-dast-reports
-          path: |
-            trivy-image.json
-            zap/zap-report.html
-            zap/zap-report.json
-          if-no-files-found: ignore
+  notify:
+    name: "Alerts"
+    needs: [build-test, security-gate, staging-dast, deploy-production]
+    if: ${{ always() }}
+    uses: ./.github/workflows/notify-discord.yml
+    with:
+      build: ${{ needs.build-test.result }}
+      gate: ${{ needs.security-gate.result }}
+      staging: ${{ needs.staging-dast.result }}
+      deploy: ${{ needs.deploy-production.result }}
+    secrets: inherit

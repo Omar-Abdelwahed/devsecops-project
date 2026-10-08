@@ -22,7 +22,7 @@ est dépassé. Une fois la baseline connue, le mode audit est supprimé
 | Bandit | `bandit -r app -ll -c bandit.yaml` | une alerte MEDIUM ou plus n'est pas exemptée |
 | SonarQube | `sonar-scanner` avec `sonar.qualitygate.wait=true` | le Quality Gate « DevSecOps » échoue (voir 4.6) |
 | Trivy fs | `trivy fs --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1` | une dépendance a une CVE HIGH/CRITICAL **corrigeable** |
-| Hadolint | `hadolint --failure-threshold warning` | le Dockerfile a une remarque `warning` ou `error` |
+| Checkov | `checkov --config-file .checkov.yaml` | un contrôle IaC échoue sur le Dockerfile ou un workflow (remplace Hadolint) |
 | Trivy image | `trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1` | l'image a une CVE HIGH/CRITICAL **corrigeable** |
 | OWASP ZAP | `zap-baseline.py -c rules.tsv -I` | une des règles 10020, 10021, 10038 est déclenchée |
 
@@ -57,7 +57,15 @@ ou de documenter une exemption justifiée (chapitre 6).
 |---|---|---|---|
 | `d57bef6` | Activation des Quality Gates | Rouge | SAST (Semgrep) ; le build et le DAST ne sont pas lancés |
 | `2e8c056` | Correction du code et du Dockerfile, ajout de Trivy fs | Rouge | SCA (Trivy fs) : dépendances toujours obsolètes |
-| Commit final | Mise à jour des dépendances, Hadolint, SBOM, exemption | Vert | — |
+| `6cf55c3` | Mise à jour des dépendances, SonarQube, Hadolint, Syft, exemptions | Vert en local (branche) | — |
+| Architecture multi-niveaux | Pipeline en 6 niveaux, Security Gate centralisé, Checkov, SBOM Trivy, staging/production | Vert en local | — |
+
+**Évolution vers un Security Gate centralisé.** Dans la version finale (chapitre 2),
+les scanners ne bloquent plus eux-mêmes : ils produisent leurs rapports au niveau 2, et le
+niveau 4 applique une politique unique ([`security-policy.json`](../../security-policy.json))
+qui décide BLOCK ou PASS. Les seuils du tableau 4.2 sont conservés ; s'y ajoute un seuil
+**CVSS ≥ 7,0** pour Trivy. Testée sur la version vulnérable, la politique bloque bien :
+4 alertes Bandit, 8 CVE Trivy et 3 contrôles Checkov.
 
 La correction partielle du commit `2e8c056` montre l'intérêt d'avoir plusieurs
 gates indépendants : le code était corrigé, mais Trivy a continué de bloquer tant que

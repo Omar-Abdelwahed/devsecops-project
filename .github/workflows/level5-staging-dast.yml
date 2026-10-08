@@ -1,0 +1,56 @@
+name: "Level 5 - Staging + DAST"
+
+# Reusable stage, called by devsecops.yml. Deploys the scanned image to the staging
+# environment (Docker Desktop on the team PC), then attacks it with OWASP ZAP.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  staging-dast:
+    name: Deploy to staging + OWASP ZAP
+    runs-on: [self-hosted, windows, docker-desktop]
+    environment:
+      name: staging
+      url: http://127.0.0.1:5001
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-image
+      - name: Load the scanned image
+        run: docker load -i app-image.tar.gz
+
+      - name: Deploy to staging (hardened container)
+        run: |
+          # Throwaway key for staging: generated per deploy, never stored.
+          $bytes = New-Object byte[] 32
+          [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+          $env:SECRET_KEY = -join ($bytes | ForEach-Object { $_.ToString("x2") })
+          .\scripts\deploy.ps1 -Environment staging -Image "devsecops-app:$env:GITHUB_SHA" -Port 5001
+          exit $LASTEXITCODE
+
+      - name: OWASP ZAP baseline against staging (blocking on FAIL rules)
+        run: |
+          New-Item -ItemType Directory -Force zap | Out-Null
+          Copy-Item .zap\rules.tsv zap\rules.tsv
+          # ZAP joins the staging network and reaches the app by its container name.
+          docker run --rm --network devsecops-staging-net -v "${env:GITHUB_WORKSPACE}\zap:/zap/wrk:rw" `
+            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py `
+            -t http://devsecops-staging:5000 -c rules.tsv -I -r zap-report.html -J zap-report.json
+          # 0 = pass, 1 = a FAIL rule fired, 3 = ZAP error. Warnings never fail (-I).
+          exit $LASTEXITCODE
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dast-zap-report
+          path: |
+            zap/zap-report.html
+            zap/zap-report.json
+          if-no-files-found: ignore

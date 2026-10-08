@@ -1,8 +1,10 @@
 # Hardened image: maintained slim base, non-root user, minimal context (.dockerignore), healthcheck.
 FROM python:3.12-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 DB_PATH=/data/app.db
 WORKDIR /code
-RUN useradd --system --uid 10001 --no-create-home appuser && chown appuser /code
+# /data is the only writable path: staging and production run with a read-only root filesystem.
+RUN useradd --system --uid 10001 --no-create-home appuser \
+    && mkdir /data && chown appuser /code /data
 COPY requirements.txt .
 # Install pinned dependencies, then remove pip: it is not needed at runtime and its
 # vendored libraries (urllib3, msgpack, setuptools) carry HIGH CVEs flagged by Trivy.

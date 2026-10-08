@@ -22,9 +22,16 @@ Une exemption est acceptée uniquement si l'une des conditions suivantes est rem
    - Bandit : commentaire `# nosec BXXX` sur la ligne, ou `skips` dans `bandit.yaml`
    - SonarQube : commentaire `# NOSONAR` sur la ligne, ou statut « Faux positif » /
      « Accepté » attribué à l'alerte dans l'interface (tracé avec l'auteur et un commentaire)
-   - Trivy : fichier `.trivyignore` (un identifiant CVE par ligne, avec `exp:` pour l'expiration)
+   - Trivy : fichier [`.trivyignore`](.trivyignore) (un identifiant CVE par ligne, avec `exp:` pour l'expiration)
+   - Checkov : commentaire `# checkov:skip=CKV_XXX:<raison>` dans le fichier concerné, ou
+     `skip-check` dans [`.checkov.yaml`](.checkov.yaml)
    - Gitleaks : fichier `.gitleaksignore` (empreinte exacte du secret détecté)
-   - OWASP ZAP : règle passée à `IGNORE` dans `rules.tsv`
+   - OWASP ZAP : règle passée à `IGNORE` dans [`.zap/rules.tsv`](.zap/rules.tsv)
+
+   Ces fichiers sont lus par les scanners eux-mêmes : une exemption s'applique donc de la
+   même façon en local (pre-commit, `scripts/local-scan.ps1`) et dans le pipeline. Le
+   Security Gate (niveau 4, [`security-policy.json`](security-policy.json)) ne contient
+   aucune exemption : il applique seulement les seuils.
 3. **Documentation** : ajout d'une entrée dans le registre ci-dessous (identifiant `EXC-XXX`),
    et d'un commentaire renvoyant à cet identifiant dans le fichier de configuration.
 4. **Revue** : l'exemption passe par une Pull Request relue par une deuxième personne

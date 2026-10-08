@@ -10,11 +10,13 @@
 | Semgrep | [à compléter] | Remplacé par SonarQube |
 | SonarQube | Gate en échec : note E, 6 vulnérabilités, couverture 0 % | Gate réussi : note A, couverture 89,2 % (S8392 faux positif EXC-001, S4502 risque accepté EXC-002) |
 | Trivy fs (SCA) | 3 CVE HIGH (Flask, Werkzeug) | 0 CVE HIGH/CRITICAL |
-| Hadolint | Non exécuté | 0 remarque (après correction de DL3025 et DL3066) |
-| Syft (SBOM) | Non généré | SBOM CycloneDX + SPDX publiés en artefact |
-| Trivy image | [à compléter] (`python:3.8`, root) | 0 CVE HIGH/CRITICAL corrigeable (`python:3.12-slim`, UID 10001) |
-| OWASP ZAP | En-têtes CSP, X-Frame-Options, X-Content-Type-Options absents | Règles 10020, 10021, 10038 respectées |
-| **Statut du pipeline** | **Vert, mais sans aucune garantie (mode audit)** | **Vert, avec Quality Gates bloquants** |
+| Checkov (IaC) | 3 échecs (conteneur root, pas de HEALTHCHECK, workflow sans `permissions`) | 0 échec (48 contrôles Dockerfile, 320 contrôles workflows) |
+| SBOM (Trivy) | Non généré | SBOM CycloneDX publié en artefact |
+| Trivy image | [à compléter] (`python:3.8`, root) | 0 CVE bloquante (166 constats non bloquants : sans correctif ou sous les seuils) |
+| OWASP ZAP | En-têtes CSP, X-Frame-Options, X-Content-Type-Options absents | Règles 10020, 10021, 10038 respectées, en staging |
+| Security Gate (politique) | — | **PASS** sur la version finale, **BLOCK** sur la version vulnérable (test négatif) |
+| Déploiement | Aucun | Staging puis production après approbation, durcis, avec retour arrière automatique |
+| **Statut du pipeline** | **Vert, mais sans aucune garantie (mode audit)** | **Vert, avec Security Gate bloquant** |
 
 Les deux pipelines verts n'ont pas du tout la même valeur : le premier ne bloquait
 rien, le second prouve que chaque contrôle a été passé.
@@ -30,8 +32,8 @@ rien, le second prouve que chaque contrôle a été passé.
 | A01 — Contrôle d'accès défaillant | Protection CSRF absente | SonarQube (S4502) — risque accepté EXC-002 |
 | A02 — Défaillances cryptographiques | MD5 pour les mots de passe | Bandit (B324), SonarQube (S4790) |
 | A03 — Injection | SQLi, injection de commandes, XSS, SSTI | Bandit (B608, B605), tests Pytest (SonarQube Community ne les détecte pas) |
-| A05 — Mauvaise configuration de sécurité | Mode debug, en-têtes absents, conteneur root | Bandit (B201), ZAP, Hadolint |
-| A06 — Composants vulnérables et obsolètes | Flask 2.0.1, Werkzeug 2.0.1, `python:3.8` | Trivy fs, Trivy image, Syft |
+| A05 — Mauvaise configuration de sécurité | Mode debug, en-têtes absents, conteneur root | Bandit (B201), ZAP, Checkov (CKV_DOCKER_3) |
+| A06 — Composants vulnérables et obsolètes | Flask 2.0.1, Werkzeug 2.0.1, `python:3.8` | Trivy fs, Trivy image (+ SBOM) |
 | A07 — Défaillances d'identification | Clé de session en dur | Gitleaks, Bandit (B105) |
 
 ## 7.3 Difficultés rencontrées et enseignements

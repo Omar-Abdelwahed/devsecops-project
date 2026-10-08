@@ -187,9 +187,10 @@ CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "app.app:app"]
 
 **Problèmes détectés par les nouveaux outils pendant la remédiation :**
 
-- **Hadolint** a signalé `DL3025` (la commande `HEALTHCHECK` doit utiliser la notation
-  JSON) et `DL3066` (utilisateur non numérique, non résolvable par l'hôte). Corrigés
-  avec la notation JSON et `USER 10001`.
+- **Hadolint** (utilisé à ce moment-là, remplacé ensuite par Checkov) a signalé `DL3025`
+  (la commande `HEALTHCHECK` doit utiliser la notation JSON) et `DL3066` (utilisateur non
+  numérique, non résolvable par l'hôte). Corrigés avec la notation JSON et `USER 10001`.
+  Checkov valide aujourd'hui le Dockerfile final : 48 contrôles réussis, 0 échec.
 - **Trivy image** a signalé 4 CVE HIGH (urllib3, msgpack, setuptools) qui ne venaient
   pas de nos dépendances mais des bibliothèques **embarquées dans pip** lui-même.
   Corrigé en désinstallant pip à la fin du build.
@@ -214,13 +215,22 @@ vraie base.
 
 Résultat : **6 tests réussis**.
 
-## 5.11 SBOM (Syft)
+## 5.11 SBOM (Trivy)
 
-Après le build, Syft inventorie tous les composants de l'image (paquets Debian et
-Python) et produit deux SBOM standards, publiés en artefact :
-
-- `sbom.cyclonedx.json` (format CycloneDX, OWASP)
-- `sbom.spdx.json` (format SPDX, Linux Foundation)
+Au niveau 2, Trivy inventorie tous les composants de l'image (paquets Debian et Python)
+et produit un SBOM au format standard **CycloneDX** (`sbom.cyclonedx.json`), publié en
+artefact. Syft, utilisé au départ, a été retiré : Trivy, déjà présent pour la SCA et le
+scan d'image, couvre ce besoin.
 
 Le SBOM permet de répondre immédiatement à la question « sommes-nous concernés ? »
 lorsqu'une nouvelle CVE est publiée, sans avoir à reconstruire l'image.
+
+## 5.12 Durcissement à l'exécution (staging et production)
+
+Le Dockerfile fixe ce que contient l'image ; la façon de lancer le conteneur ajoute une
+seconde couche de protection. Staging et production sont lancés par
+[`scripts/deploy.ps1`](../../scripts/deploy.ps1) avec un système de fichiers en lecture
+seule, aucune capacité Linux, `no-new-privileges`, des limites mémoire et processus, et un
+port lié à `127.0.0.1` (détail au chapitre 2.6). L'image a été adaptée : la base SQLite est
+déplacée dans `/data` (`DB_PATH=/data/app.db`), seul répertoire inscriptible, monté sur un
+volume Docker propre à chaque environnement.

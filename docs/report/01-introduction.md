@@ -55,7 +55,8 @@ Il s'agit d'une petite application de prise de notes :
 | SAST | **Bandit** | Code Python (motifs dangereux) |
 | SAST / qualité | **SonarQube** (Community, Docker Desktop) | Vulnérabilités, *security hotspots*, bugs, couverture de tests ; remplace Semgrep utilisé en phase As-Is |
 | SCA | **Trivy (filesystem)** | CVE des dépendances déclarées (`requirements.txt`) |
-| Lint IaC | **Hadolint** | Mauvaises pratiques dans le `Dockerfile` |
-| SBOM | **Syft** | Inventaire des composants de l'image (CycloneDX, SPDX) |
+| IaC | **Checkov** | Mauvaises configurations du `Dockerfile` et des workflows GitHub Actions |
+| SBOM | **Trivy** | Inventaire des composants de l'image (CycloneDX) |
+| Conteneurisation | **Docker / Docker Desktop** | Build de l'image, environnements de staging et de production |
 | Scan de conteneur | **Trivy (image)** | CVE du système et des paquets de l'image construite |
 | DAST | **OWASP ZAP (baseline)** | Application en cours d'exécution (en-têtes, cookies, etc.) |

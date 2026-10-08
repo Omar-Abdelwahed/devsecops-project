@@ -1,0 +1,53 @@
+name: "Alerts - Discord notification"
+
+# Reusable stage, called by devsecops.yml at the end of every run.
+# Sends a Discord message when the pipeline is blocked or fails, and when production is deployed.
+on:
+  workflow_call:
+    inputs:
+      build:
+        type: string
+        required: true
+      gate:
+        type: string
+        required: true
+      staging:
+        type: string
+        required: true
+      deploy:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Notify Discord
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send message
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          BUILD: ${{ inputs.build }}
+          GATE: ${{ inputs.gate }}
+          STAGING: ${{ inputs.staging }}
+          DEPLOY: ${{ inputs.deploy }}
+          BRANCH: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then echo "DISCORD_WEBHOOK_URL not set: skipping notification."; exit 0; fi
+          if   [ "$BUILD" = "failure" ];   then text=":x: **Pipeline BLOCKED** at Level 1 (build or unit tests)"
+          elif [ "$GATE" = "failure" ];    then text=":no_entry: **Security Gate BLOCKED** the build (Level 4)"
+          elif [ "$STAGING" = "failure" ]; then text=":no_entry: **OWASP ZAP BLOCKED** the build in staging (Level 5)"
+          elif [ "$DEPLOY" = "failure" ];  then text=":warning: **Production deploy failed** (rolled back if a previous version existed)"
+          elif [ "$DEPLOY" = "success" ];  then text=":white_check_mark: **Deployed to production**"
+          elif [ "$GATE" = "success" ];    then echo "Passed, nothing deployed: no notification."; exit 0
+          else text=":warning: **Pipeline did not complete** (a stage was cancelled or skipped)"
+          fi
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          message="$text
+          Repo: $GITHUB_REPOSITORY  |  Branch: $BRANCH  |  Commit: ${GITHUB_SHA::7}  |  By: $ACTOR
+          Details and reports: $run_url"
+          jq -n --arg content "$message" '{username: "DevSecOps pipeline", content: $content}' \
+            | curl -fsS -H "Content-Type: application/json" -d @- "$WEBHOOK"

@@ -25,3 +25,9 @@ sonarqube/
 .scannerwork/
 .coveragerc
 *.xml
+reports-local/
+scripts/
+.zap/
+.checkov.yaml
+security-policy.json
+.trivyignore

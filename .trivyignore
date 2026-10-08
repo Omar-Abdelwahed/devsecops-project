@@ -1,0 +1,5 @@
+# Trivy exemptions (SCA and container scan). Read automatically by Trivy.
+# One vulnerability ID per line, each with its EXC-xxx entry in exemption-process.md
+# and an expiry date, for example:
+#   CVE-2099-0000 exp:2027-01-31   # EXC-00X: not reachable, no fixed version available
+# Currently empty: no Trivy exemption is in force.
