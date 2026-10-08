@@ -1,0 +1,5 @@
+[run]
+source = app
+# Relative paths so SonarQube on the self-hosted runner can map coverage.xml
+# produced on the GitHub-hosted runner.
+relative_files = True

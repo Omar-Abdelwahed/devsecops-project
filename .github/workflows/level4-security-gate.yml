@@ -1,0 +1,27 @@
+name: "Level 4 - Security Gate"
+
+# Reusable stage, called by devsecops.yml. Applies security-policy.json to the
+# consolidated report: BLOCK stops the pipeline, PASS lets it continue to staging.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: Security Gate (policy check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: security-report
+      - name: Apply security policy (blocking)
+        run: python3 scripts/security_gate.py security-report/summary.json security-policy.json --out gate-result.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-result
+          path: gate-result.json
+          if-no-files-found: ignore

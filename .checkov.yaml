@@ -1,0 +1,13 @@
+# Checkov (IaC scanner) configuration, used locally (pre-commit, local-scan.ps1) and in CI (level 2).
+# Scans the Dockerfile and the GitHub Actions workflows.
+# Exemptions go in skip-check, each with its EXC-xxx reference from exemption-process.md.
+directory:
+  - .
+framework:
+  - dockerfile
+  - github_actions
+skip-path:
+  - sonarqube
+  - reports-local
+compact: true
+quiet: true

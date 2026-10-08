@@ -1,0 +1,130 @@
+name: "Level 2 - Security Scans"
+
+# Reusable stage, called by devsecops.yml. Every scanner runs in REPORT mode: it records
+# its findings but never fails here. The decision is taken once, by the Security Gate (level 4).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: Secrets (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest dir /repo \
+            --redact --exit-code 0 --report-format json --report-path /repo/gitleaks-report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scan-gitleaks
+          path: gitleaks-report.json
+
+  bandit:
+    name: SAST (Bandit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install bandit
+      # bandit.yaml holds the documented exemptions (see exemption-process.md)
+      - name: Bandit
+        run: bandit -r app -c bandit.yaml -f json -o bandit-report.json --exit-zero
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scan-bandit
+          path: bandit-report.json
+
+  sonarqube:
+    name: SAST + quality (SonarQube)
+    # Runs on the team PC, where SonarQube lives in Docker Desktop (see sonarqube/).
+    runs-on: [self-hosted, windows, docker-desktop]
+    # Never run code from fork PRs on the self-hosted machine.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # SonarQube uses git history to detect new code
+      - uses: actions/download-artifact@v4
+        with:
+          name: pytest-report
+      - name: SonarQube scan
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          docker run --rm --network sonarnet `
+            -e SONAR_HOST_URL=http://sonarqube:9000 -e SONAR_TOKEN `
+            -v "${env:GITHUB_WORKSPACE}:/usr/src" `
+            sonarsource/sonar-scanner-cli:latest
+          # sonar.qualitygate.wait=true: exit code 0 means the quality gate passed.
+          $status = if ($LASTEXITCODE -eq 0) { "OK" } else { "ERROR" }
+          @{ quality_gate = $status } | ConvertTo-Json | Out-File -Encoding ascii sonarqube-result.json
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scan-sonarqube
+          path: sonarqube-result.json
+
+  trivy-fs:
+    name: SCA (Trivy filesystem)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy fs
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work aquasec/trivy:latest fs \
+            --scanners vuln --format json --output trivy-fs.json .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scan-trivy-fs
+          path: trivy-fs.json
+
+  checkov:
+    name: IaC (Checkov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # .checkov.yaml selects the frameworks (Dockerfile, GitHub Actions) and holds the exemptions.
+      - name: Checkov
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src bridgecrew/checkov:latest \
+            --config-file .checkov.yaml --output json --soft-fail > checkov-report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scan-checkov
+          path: checkov-report.json
+
+  trivy-image:
+    name: Container image + SBOM (Trivy image)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-image
+      - run: docker load -i app-image.tar.gz
+      - name: Trivy image (vulnerabilities)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/work" -w /work \
+            aquasec/trivy:latest image --scanners vuln --format json --output trivy-image.json \
+            "devsecops-app:${GITHUB_SHA}"
+      - name: SBOM (Trivy, CycloneDX)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/work" -w /work \
+            aquasec/trivy:latest image --format cyclonedx --output sbom.cyclonedx.json \
+            "devsecops-app:${GITHUB_SHA}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scan-trivy-image
+          path: trivy-image.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cyclonedx.json

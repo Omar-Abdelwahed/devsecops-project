@@ -1,0 +1,46 @@
+name: "Level 1 - Build & Test"
+
+# Reusable stage, called by devsecops.yml. Produces the coverage report and the app image
+# that every later level reuses (the image is built once, scanned, then deployed as-is).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: Unit tests (Pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - name: Pytest + coverage (blocking)
+        run: python -m pytest tests/ -v --junitxml=pytest-report.xml --cov=app --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pytest-report
+          path: |
+            pytest-report.xml
+            coverage.xml
+          if-no-files-found: ignore
+
+  docker-build:
+    name: Docker build
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t "devsecops-app:${GITHUB_SHA}" .
+      - name: Export image for later levels
+        run: docker save "devsecops-app:${GITHUB_SHA}" | gzip > app-image.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-image
+          path: app-image.tar.gz
+          retention-days: 3
