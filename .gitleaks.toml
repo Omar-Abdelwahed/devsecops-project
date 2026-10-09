@@ -1,0 +1,12 @@
+# Gitleaks config used by the pre-commit hook (and picked up automatically from the repo root).
+# Keeps all default rules and adds a stricter one: the default generic-api-key rule skips
+# low-entropy values (e.g. "Asx123795621"), so hardcoded assignments slipped through.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "hardcoded-credential-assignment"
+description = "Hardcoded API key, secret, token or password assigned in source"
+regex = '''(?i)\b[\w]*(?:api[_-]?key|apikey|secret|token|passw(?:or)?d|pwd)[\w]*\s*[:=]\s*["']([^"'\s]{8,})["']'''
+secretGroup = 1
+keywords = ["api", "key", "secret", "token", "pass", "pwd"]
