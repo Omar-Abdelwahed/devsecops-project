@@ -19,12 +19,32 @@ jobs:
       run:
         shell: powershell
     steps:
+      - name: Check the production secret
+        env:
+          SECRET_KEY: ${{ secrets.PROD_SECRET_KEY }}
+        run: |
+          if (-not $env:SECRET_KEY) {
+            Write-Host "::error::Secret PROD_SECRET_KEY is missing. Add it under Settings > Environments > production > Environment secrets."
+            exit 1
+          }
+
       - uses: actions/checkout@v4
+
       # The exact image that passed the gate and staging: never rebuilt for production.
+      # Level 5 already loaded it on this machine; download it only if it is missing.
+      - name: Check if the image is already loaded
+        id: image
+        run: |
+          $ErrorActionPreference = "Continue"   # "No such image" on stderr must not stop the step
+          docker image inspect "devsecops-app:$env:GITHUB_SHA" *> $null
+          "present=$($LASTEXITCODE -eq 0)".ToLower() | Out-File -Append -Encoding ascii $env:GITHUB_OUTPUT
+          exit 0
       - uses: actions/download-artifact@v4
+        if: steps.image.outputs.present != 'true'
         with:
           name: app-image
       - name: Load image
+        if: steps.image.outputs.present != 'true'
         run: docker load -i app-image.tar.gz
 
       - name: Deploy to production (hardened container, automatic rollback)

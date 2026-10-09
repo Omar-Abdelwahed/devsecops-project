@@ -45,7 +45,7 @@ docker run -d --name $name --network $network `
     -e SECRET_KEY `
     --restart unless-stopped `
     $Image | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "docker run failed" }
+$started = ($LASTEXITCODE -eq 0)
 
 function Wait-Healthy {
     for ($i = 0; $i -lt 30; $i++) {
@@ -58,15 +58,20 @@ function Wait-Healthy {
     return $false
 }
 
-if (Wait-Healthy) {
+if ($started -and (Wait-Healthy)) {
     docker rm -f $previous *> $null
     Write-Host "$Environment is up: http://127.0.0.1:$Port ($Image)"
     exit 0
 }
 
-Write-Host "Health check failed for $Image. Container logs:"
-docker logs $name
-docker rm -f $name | Out-Null
+# The new version did not start, or started unhealthy: remove it and restore the previous one.
+if ($started) {
+    Write-Host "Health check failed for $Image. Container logs:"
+    docker logs $name
+} else {
+    Write-Host "docker run failed for $Image."
+}
+docker rm -f $name *> $null
 if ($hadPrevious) {
     docker rename $previous $name
     docker start $name | Out-Null
