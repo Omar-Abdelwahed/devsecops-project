@@ -1,0 +1,153 @@
+Crée une présentation professionnelle de 13 diapositives en français pour une soutenance de projet universitaire. Style moderne et aéré, thème sombre bleu / cybersécurité, avec icônes, cartes et schémas. Garde le contenu détaillé ci-dessous, mais mets-le en forme visuellement (cartes, colonnes, tableaux, schémas) plutôt qu'en longues listes. Une section = une diapositive.
+
+---
+
+# Pipeline DevSecOps — Notes App
+Intégration de contrôles de sécurité automatisés dans un pipeline CI/CD, du poste du développeur au déploiement en production
+
+Réalisé par : Amen Saidani & Omar Abdelwahed
+Classe : 5NIDS2 | Module : DevSecOps | Octobre 2026
+
+---
+
+# Contexte et objectifs
+Notes App est une application web Flask + SQLite volontairement vulnérable : connexion, inscription, notes et recherche.
+
+- Problème : la sécurité est souvent contrôlée trop tard, après la mise en production
+- Objectif : détecter et bloquer les failles automatiquement à chaque commit (Shift Left)
+- Démarche en 4 étapes :
+  1. Audit initial (As-Is)
+  2. Quality Gates bloquants (To-Be)
+  3. Remédiation du code, des dépendances et de Docker
+  4. Processus d'exemption des faux positifs
+
+---
+
+# Les outils de sécurité
+(Afficher en 6 cartes avec icônes)
+- Gitleaks — Secrets : clés et tokens dans le code et tout l'historique Git
+- Bandit — SAST : failles dans le code Python (injection SQL, commandes, MD5)
+- SonarQube — SAST : qualité et sécurité du code, Quality Gate bloquant
+- Trivy — SCA et conteneur : CVE des dépendances et de l'image Docker, SBOM CycloneDX
+- Checkov — IaC : bonnes pratiques du Dockerfile et des workflows GitHub Actions
+- OWASP ZAP — DAST : attaque l'application en cours d'exécution (en-têtes, cookies)
+
+Infrastructure : GitHub Actions, runner auto-hébergé sur Docker Desktop, alertes Discord.
+
+---
+
+# Architecture du pipeline en 6 niveaux
+(Afficher sous forme de schéma horizontal avec flèches)
+1. Build & Test — tests unitaires et tests de sécurité Pytest, construction de l'image
+2. Security Scans — Gitleaks, Bandit, SonarQube, Trivy, Checkov
+3. Rapports — consolidation des résultats et génération du SBOM
+4. Security Gate — décision unique : passe ou bloque
+5. Staging + DAST — déploiement de test et scan OWASP ZAP
+6. Production — déploiement automatique avec rollback
+
+Chaque niveau ne démarre que si le précédent a réussi. Une alerte Discord est envoyée à la fin.
+
+---
+
+# Phase As-Is : l'audit initial
+Les scanners sont ajoutés en mode audit, sans bloquer la livraison, pour mesurer la dette de sécurité existante.
+
+Résultat : le pipeline est vert… alors que l'application est très vulnérable.
+Un pipeline vert ne signifie pas une application sûre.
+
+---
+
+# Résultats de l'audit
+(Afficher sous forme de tableau)
+| Outil | Résultat |
+|---|---|
+| Gitleaks | Token GitHub écrit en dur dans le code |
+| Bandit | 7 alertes : 3 HIGH, 2 MEDIUM, 2 LOW |
+| SonarQube | Quality Gate en échec, note de sécurité E |
+| Trivy (dépendances) | 3 CVE HIGH dans Flask et Werkzeug 2.0.1 |
+| Docker | python:3.8 en fin de vie, exécuté en root |
+| OWASP ZAP | En-têtes de sécurité HTTP absents |
+
+Failles principales : injection SQL, injection de commandes, XSS, mots de passe en MD5, mode debug actif.
+
+---
+
+# Exemple : l'injection SQL
+(Afficher en deux colonnes Avant / Après)
+Avant — requête construite avec les données de l'utilisateur :
+SELECT * FROM users WHERE username = '{u}' AND password = '...'
+Avec le nom « admin' -- », on se connecte en admin sans mot de passe.
+
+Après — requête paramétrée :
+SELECT password FROM users WHERE username = ?
+La donnée n'est plus jamais interprétée comme du SQL. Un test automatique vérifie que l'attaque échoue.
+
+---
+
+# Phase To-Be : les Quality Gates
+Les scanners produisent leurs rapports, puis un Security Gate central applique une politique écrite sous forme de code.
+
+- Blocage de toute faille HIGH ou CRITICAL (CVSS ≥ 7.0) qui dispose d'un correctif
+- Quality Gate SonarQube bloquant
+- Fail closed : un rapport manquant ou un scanner en panne bloque le pipeline
+- Preuve : la version vulnérable est automatiquement bloquée par le gate
+
+---
+
+# Remédiation
+(Afficher en 3 colonnes : Code, Dépendances, Docker)
+Code
+- Requêtes SQL paramétrées
+- Secrets supprimés, clé injectée par variable d'environnement
+- MD5 remplacé par scrypt
+- Échappement contre XSS, route /ping supprimée
+- Debug supprimé, en-têtes de sécurité ajoutés
+
+Dépendances
+- Flask 2.0.1 → 3.1.3
+- Werkzeug 2.0.1 → 3.1.9
+- Versions épinglées, outils de test hors de l'image
+
+Docker
+- Image python:3.12-slim
+- Utilisateur non root, pip supprimé
+- Conteneur en lecture seule, sans privilèges, avec limites de ressources
+
+---
+
+# Gestion des faux positifs
+Une alerte n'est exemptée que si elle est justifiée, documentée et validée.
+
+- EXC-001 : écoute sur 0.0.0.0 — faux positif, nécessaire dans un conteneur
+- EXC-002 : protection CSRF — risque accepté et justifié dans SonarQube
+- Exemptions centralisées dans des fichiers versionnés (.trivyignore, .checkov.yaml, règles ZAP)
+
+---
+
+# Déploiement staging et production
+(Afficher sous forme de schéma : Image validée → Staging → Production)
+- Seule la branche main déploie, jamais une pull request
+- La même image validée est promue en production, sans reconstruction
+- Staging (port 5001) : scan dynamique OWASP ZAP
+- Production (port 8080) : déploiement automatique si tout passe
+- Vérification de santé et rollback automatique en cas d'échec
+
+---
+
+# Résultats
+(Afficher sous forme de chiffres clés)
+- 14 jobs au vert, du build à la production
+- 0 faille HIGH/CRITICAL non traitée
+- Quality Gate SonarQube validé
+- Staging et production en ligne
+- Version vulnérable bloquée automatiquement
+
+---
+
+# Conclusion et perspectives
+- La sécurité est devenue automatique, mesurable et bloquante
+- Aucun outil ne couvre tout : la combinaison des outils est indispensable
+- Bonne pratique : auditer d'abord, puis durcir progressivement
+- Perspectives : monitoring, signature des images, déploiement cloud / Kubernetes
+
+Merci de votre attention — Questions ?
