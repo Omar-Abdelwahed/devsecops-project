@@ -13,7 +13,7 @@ pipeline. The full project report (in French) is in [docs/report/](docs/report/R
 | 3 Report Generation | GitHub-hosted runner | One JSON / Markdown / HTML report from all scanners |
 | 4 Security Gate | GitHub-hosted runner | `security-policy.json` applied: BLOCK or PASS (fails closed) |
 | 5 Staging + DAST | Self-hosted (Docker Desktop) | Hardened staging container on 127.0.0.1:5001, OWASP ZAP baseline |
-| 6 Manual Approval & Deploy | Self-hosted (Docker Desktop) | Waits for approval, deploys production on 127.0.0.1:8080, rollback on failure |
+| 6 Deploy to Production | Self-hosted (Docker Desktop) | Automatic after staging + DAST pass; production on 127.0.0.1:8080, rollback on failure |
 | Alerts | GitHub-hosted runner | Discord message on block, failure or deployment |
 
 Each level is its own reusable workflow (`.github/workflows/level*.yml`), chained by
@@ -37,7 +37,9 @@ SonarQube (dashboard http://localhost:9000):
 ## One-time GitHub setup
 
 - Self-hosted runner on the team PC, label `docker-desktop`
-- Environments: `staging`, and `production` with a required reviewer
-- Secrets: `SONAR_TOKEN`, `PROD_SECRET_KEY` (production environment), `DISCORD_WEBHOOK_URL`
+- Environment: `staging` (created automatically on the first run)
+- Secrets: `SONAR_TOKEN`, `DISCORD_WEBHOOK_URL` (optional)
+- The production secret key is generated on the team PC at the first deploy
+  (`%USERPROFILE%\.devsecops\prod-secret-key`, readable by that account only)
 
 Scanner exemptions are documented in [exemption-process.md](exemption-process.md).

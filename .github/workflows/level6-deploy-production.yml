@@ -1,7 +1,7 @@
-name: "Level 6 - Manual Approval & Deploy"
+name: "Level 6 - Deploy to Production"
 
-# Reusable stage, called by devsecops.yml. The "production" GitHub environment has a
-# required reviewer: the job waits until a person reviews the results and clicks Approve.
+# Reusable stage, called by devsecops.yml. Automatic: runs as soon as the Security Gate
+# (level 4) and staging + DAST (level 5) have passed on main. No manual step, no GitHub secret.
 on:
   workflow_call:
 
@@ -10,24 +10,12 @@ permissions:
 
 jobs:
   deploy-production:
-    name: Deploy to production (after approval)
+    name: Deploy to production
     runs-on: [self-hosted, windows, docker-desktop]
-    environment:
-      name: production
-      url: http://127.0.0.1:8080
     defaults:
       run:
         shell: powershell
     steps:
-      - name: Check the production secret
-        env:
-          SECRET_KEY: ${{ secrets.PROD_SECRET_KEY }}
-        run: |
-          if (-not $env:SECRET_KEY) {
-            Write-Host "::error::Secret PROD_SECRET_KEY is missing. Add it under Settings > Environments > production > Environment secrets."
-            exit 1
-          }
-
       - uses: actions/checkout@v4
 
       # The exact image that passed the gate and staging: never rebuilt for production.
@@ -48,9 +36,18 @@ jobs:
         run: docker load -i app-image.tar.gz
 
       - name: Deploy to production (hardened container, automatic rollback)
-        env:
-          # Stable key so user sessions survive a redeploy. Stored as an environment secret.
-          SECRET_KEY: ${{ secrets.PROD_SECRET_KEY }}
         run: |
+          # Production secret key: generated once on this machine, then reused by every deploy so
+          # user sessions survive a redeploy. Readable by this Windows account only; never in git or GitHub.
+          $keyFile = Join-Path $env:USERPROFILE ".devsecops\prod-secret-key"
+          if (-not (Test-Path $keyFile)) {
+            New-Item -ItemType Directory -Force (Split-Path $keyFile) | Out-Null
+            $bytes = New-Object byte[] 32
+            [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+            [IO.File]::WriteAllText($keyFile, (-join ($bytes | ForEach-Object { $_.ToString("x2") })))
+            icacls $keyFile /inheritance:r /grant:r "${env:USERNAME}:F" | Out-Null
+            Write-Host "Generated a new production secret key."
+          }
+          $env:SECRET_KEY = [IO.File]::ReadAllText($keyFile).Trim()
           .\scripts\deploy.ps1 -Environment production -Image "devsecops-app:$env:GITHUB_SHA" -Port 8080
           exit $LASTEXITCODE

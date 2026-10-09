@@ -15,7 +15,7 @@
 | Trivy image | [à compléter] (`python:3.8`, root) | 0 CVE bloquante (166 constats non bloquants : sans correctif ou sous les seuils) |
 | OWASP ZAP | En-têtes CSP, X-Frame-Options, X-Content-Type-Options absents | Règles 10020, 10021, 10038 respectées, en staging |
 | Security Gate (politique) | — | **PASS** sur la version finale, **BLOCK** sur la version vulnérable (test négatif) |
-| Déploiement | Aucun | Staging puis production après approbation, durcis, avec retour arrière automatique |
+| Déploiement | Aucun | Staging puis production automatiques après le Security Gate et le DAST, durcis, avec retour arrière automatique |
 | **Statut du pipeline** | **Vert, mais sans aucune garantie (mode audit)** | **Vert, avec Security Gate bloquant** |
 
 Les deux pipelines verts n'ont pas du tout la même valeur : le premier ne bloquait

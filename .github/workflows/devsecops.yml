@@ -49,10 +49,9 @@ jobs:
     uses: ./.github/workflows/level5-staging-dast.yml
 
   deploy-production:
-    name: "6 Manual Approval & Deploy"
+    name: "6 Deploy to Production"
     needs: staging-dast
     uses: ./.github/workflows/level6-deploy-production.yml
-    secrets: inherit
 
   notify:
     name: "Alerts"

@@ -2,7 +2,7 @@
 
 L'architecture suit quatre zones : **Développement** (sécurité *shift-left* sur le poste),
 **CI/CD** (contrôles automatisés), **Acceptation** (Security Gate et staging) et
-**Production** (déploiement après approbation). Chaque niveau du pipeline est un workflow
+**Production** (déploiement automatique). Chaque niveau du pipeline est un workflow
 GitHub Actions réutilisable, enchaîné par l'orchestrateur
 [`.github/workflows/devsecops.yml`](../../.github/workflows/devsecops.yml).
 
@@ -24,7 +24,7 @@ flowchart LR
       L5[5 Staging + DAST<br/>OWASP ZAP]
     end
     subgraph PROD[Production]
-      L6[6 Approbation manuelle<br/>+ déploiement]
+      L6[6 Déploiement<br/>en production]
     end
     PC -->|git push| L1 --> L2 --> L3 --> L4
     L4 -->|PASS| L5 --> L6
@@ -43,7 +43,7 @@ flowchart LR
 | 3 Report Generation | `level3-reports.yml` | `scripts/security_report.py` | Runner GitHub | Fusionner les rapports en un format commun |
 | 4 Security Gate | `level4-security-gate.yml` | `scripts/security_gate.py` + `security-policy.json` | Runner GitHub | Décider **BLOCK** ou **PASS** |
 | 5 Staging + DAST | `level5-staging-dast.yml` | Docker, OWASP ZAP | Poste (Docker Desktop) | Déployer en staging et attaquer l'application |
-| 6 Approbation & déploiement | `level6-deploy-production.yml` | Docker | Poste (Docker Desktop) | Déployer en production après validation humaine |
+| 6 Déploiement en production | `level6-deploy-production.yml` | Docker | Poste (Docker Desktop) | Déployer automatiquement en production |
 | Alertes | `notify-discord.yml` | Webhook Discord | Runner GitHub | Prévenir en cas de blocage, d'échec ou de déploiement |
 
 ## 2.3 Outils par catégorie
@@ -80,9 +80,15 @@ remplace Hadolint, car il couvre le Dockerfile **et** les workflows GitHub Actio
   dans le pipeline. `scripts/local-scan.ps1` exécute aussi le même rapport et le même gate.
 - **Les déploiements ne partent que de `main`.** Une Pull Request exécute les niveaux 1
   à 4, jamais le staging ni la production.
-- **Une validation humaine avant la production.** L'environnement GitHub `production` a un
-  relecteur obligatoire : le niveau 6 attend que quelqu'un consulte les résultats et
-  clique sur *Approve*.
+- **Déploiement automatique en production.** L'approbation manuelle de l'architecture de
+  référence a été remplacée par un déploiement automatique : la production ne reçoit une
+  version qu'après le Security Gate **et** le staging + DAST réussis. Le contrôle reste
+  automatique et systématique ; il ne dépend plus d'un clic. Une validation humaine reste
+  possible en ajoutant un relecteur obligatoire à un environnement GitHub `production`.
+- **Clé secrète de production générée sur le poste.** Au premier déploiement, le niveau 6
+  génère une clé aléatoire de 256 bits dans `%USERPROFILE%\.devsecops\prod-secret-key`,
+  lisible par le seul compte Windows du runner (`icacls`), puis la réutilise : les sessions
+  survivent aux redéploiements, et la clé n'est jamais stockée dans Git ni dans GitHub.
 - **Principe du moindre privilège** : tous les workflows n'ont que `contents: read`.
 
 ## 2.5 Politique du Security Gate
@@ -133,8 +139,8 @@ de santé, et la version précédente est restaurée et répond de nouveau.
 exécuterait le code de n'importe quelle Pull Request. Le job SonarQube est donc limité aux
 `push` et aux PR internes, staging et production ne partent que de `main`, et
 l'approbation des workflows des contributeurs externes est exigée dans les paramètres du
-dépôt. Les secrets (`SONAR_TOKEN`, `PROD_SECRET_KEY`, `DISCORD_WEBHOOK_URL`) sont stockés
-dans GitHub, jamais dans le code.
+dépôt. Les secrets du pipeline (`SONAR_TOKEN`, `DISCORD_WEBHOOK_URL`) sont stockés dans GitHub,
+la clé de production uniquement sur le poste : aucun n'est dans le code.
 
 ## 2.7 Rapports et alertes
 
